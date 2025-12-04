@@ -21,6 +21,15 @@ global debug
 
 debug=False
 
+# --- ADDED GLOBALS & CONSTANTS ---
+global_ph_level = None
+global_orp_level = None
+
+# These are the "ID" bytes for the values we want, from your analysis
+ORP_ID = b'\x10'
+PH_ID = b'\x18'
+# ---------------------------------
+
 class MessageType(Enum):
     LIVE = 0x00
     COMMAND = 0x01
@@ -34,9 +43,7 @@ def get_message_title(value):
     except ValueError:
         return f"\033[41;97mUnknown message type {value}\033[0m"
 
-# Convert °F to °C and round to 2 decimal places
-def temperature_F_to_C(temperatureInF):
-    return round((temperatureInF- 32) * 5 / 9, 2)
+# --- REMOVED F_to_C conversion function ---
 
 # Create shared queues for messages and responses
 cmd_queue = queue.Queue()
@@ -47,15 +54,22 @@ response_queue = queue.Queue()
 producer = Producer(message_queue, response_queue, cmd_queue)
 consumer = Consumer(message_queue, response_queue, cmd_queue)
 
+# --- MODIFIED: Now receives spa_ip ---
 # Initialize the sensors
-sensors= HA_init(producer)
+sensors, spa_ip = HA_init(producer)
+# -------------------------------------
 
 # Start the consumer
 consumer.start()
 
-
-
-
+# --- NEW HELPER FUNCTION ---
+def find_sensor_by_name(sensors_list, name):
+    """Finds a sensor object in the list by its name."""
+    for sensor_name, sensor_obj in sensors_list:
+        if sensor_name == name:
+            return sensor_obj
+    return None
+# ---------------------------
 
 state = 0
 temp1 = temp2 = temp3 = 0
@@ -68,7 +82,6 @@ def PingSpa(client, message_type = MessageType.LIVE.value):
     if debug:
         print(f"Sending {get_message_title(message_type)} ping with no content, type 0x{message_type:02X}:")
     pckt = LevvenPacket(message_type, bytearray())  # Initialize with type 0 and an empty payload
-    #pckt = LevvenPacket(MessageType.LIVE.value, bytearray())  # Initialize with type 0 and an empty payload
     pack = LevvenToBytes(pckt)
 
     # Send the serialized packet over the TCP connection
@@ -84,6 +97,7 @@ def LevvenToBytes(pckt):
     return pack
 
 def get_spa():
+    # This function is no longer used, but we keep it for reference
     # Create a UDP socket
     client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
@@ -254,11 +268,278 @@ def handle_packets(b):
     except Exception:
         state = 0
 
-def receive(packet):
-    """Handle the received packet (placeholder function)."""
-    #print(f"Received packet: {packet}")
 
-def send_packet_with_debug(spaIP,sensors):
+# --- NEW FUNCTION TO PROCESS PACKETS ---
+def process_packet(packet):
+    global debug, global_ph_level, global_orp_level, sensors
+    try:
+        if debug:
+            print(f"Packet Type: {packet.type}/0x{packet.type:02X} - {get_message_title(packet.type)}")
+
+        if packet.type == MessageType.PING.value:
+            # Nothing to see here, don't decode or debug print the packet
+            return
+        
+        pack=LevvenToBytes(packet)
+
+    except Exception as e:
+        if debug:
+            print(f"Error during packet serialization: {e}")
+        pack=None
+        return
+
+    if pack!=None:
+        if packet.type == MessageType.INFORMATION.value:
+            if debug:
+                print(f"\n{get_message_title(packet.type)}:\n")
+            bytes_result = bytes(packet.payload)
+            spa_information = SpaInformation.spa_information()
+            spa_information.ParseFromString(bytes_result)
+
+            # --- NEW pH/ORP RAW PACKET PARSING ---
+            # We run this on bytes_result (packet.payload)
+            
+            if len(bytes_result) < 100:
+                if debug:
+                    print("--> Short packet received (likely a ping or command ack). Ignoring for pH/ORP.")
+            else:
+                if debug:
+                    print("--> Full status packet received. Parsing for pH/ORP...")
+                
+                orp_index = bytes_result.find(ORP_ID)
+                
+                if orp_index != -1 and len(bytes_result) > orp_index + 5:
+                    expected_ph_index = orp_index + 3
+                    
+                    if bytes_result[expected_ph_index] == PH_ID[0]:
+                        val_bytes_orp = bytes_result[orp_index + 1 : orp_index + 3]
+                        raw_val_orp = int.from_bytes(val_bytes_orp, 'little')
+                        global_orp_level = raw_val_orp / 2.0
+                        if debug:
+                            print(f"  (Raw Parse) 🌡️ ORP: {global_orp_level} mV (Raw: {raw_val_orp})")
+                        
+                        val_bytes_ph = bytes_result[expected_ph_index + 1 : expected_ph_index + 3]
+                        raw_val_ph = int.from_bytes(val_bytes_ph, 'little')
+                        global_ph_level = raw_val_ph / 200.0
+                        if debug:
+                            print(f"  (Raw Parse) 🧪 pH: {global_ph_level} (Raw: {raw_val_ph})")
+                    else:
+                        if debug:
+                            print("--> Found ORP but PH ID was missing. Skipping parse.")
+                else:
+                    if debug:
+                        print("--> Status packet did not contain expected ORP/PH data.")
+            # --- END OF NEW PARSING ---
+
+
+            if debug:
+                print(f"--- FULL INFORMATION PACKET ---\n{spa_information}\n---------------------------------")
+                print(f"Pack Serial Number: {spa_information.pack_serial_number}")
+
+                try:
+                    print(f"Product Code: {SpaInformation.PRODUCT_CODE.Name(spa_information.product_code)}")
+                except ValueError:
+                    print(f"Product Code: {spa_information.product_code} (Unknown ID)")
+                
+                try:
+                    print(f"Spa Type: {SpaInformation.SPA_TYPE.Name(spa_information.spa_type)}")
+                except ValueError:
+                     print(f"Spa Type: {spa_information.spa_type} (Unknown ID)")
+            
+            # ----- SENSOR UPDATE LOGIC (FOR PH/ORP ONLY) -----
+            
+            live_json={ "PH": global_ph_level, "ORP": global_orp_level }
+            
+            for name, sensor in sensors:
+                if name=="PH":
+                    ph_val = live_json.get("PH")
+                    if ph_val is not None:
+                        if debug:
+                            print(f"HA Sensor Name: PH, Value: {ph_val}")
+                        sensor.set_state(ph_val)
+                if name=="ORP":
+                    orp_val = live_json.get("ORP")
+                    if orp_val is not None:
+                        if debug:
+                            print(f"HA Sensor Name: ORP, Value: {orp_val}")
+                        sensor.set_state(orp_val)
+            
+            return # Continue loop
+        
+        elif packet.type == MessageType.CONFIGURATION.value:
+            if debug:
+                print(f"\n{get_message_title(packet.type)}:\n")
+                bytes_result = bytes(packet.payload)
+                spa_configuration = SpaConfiguration.spa_configuration()
+                spa_configuration.ParseFromString(bytes_result)
+
+                print(f"--- FULL CONFIGURATION PACKET ---\n{spa_configuration}\n---------------------------------")
+                
+                try:
+                    print(f"Power: {SpaConfiguration.PHASE.Name(spa_configuration.powerlines)}")
+                except ValueError:
+                    powerlines_val = spa_configuration.powerlines
+                    if 'spa_information' in locals() and hasattr(spa_information, 'powerlines'):
+                         powerlines_val = spa_information.powerlines
+                    print(f"Power: {powerlines_val} (Unknown ID)")
+                    
+                print(f"Exhaust Fan: {spa_configuration.exhaust_fan}")
+                print(f"Breaker Size: {spa_configuration.breaker_size}")
+                print(f"Fogger: {spa_configuration.fogger}")
+            return # Continue loop
+        
+        # ----- THIS BLOCK NOW HANDLES ALL MAIN SENSOR UPDATES -----
+        elif packet.type == MessageType.LIVE.value:
+            if debug:
+                print(f"\n{get_message_title(packet.type)}:\n")
+            bytes_result = bytes(packet.payload)
+            hex_representation = ' '.join(f'{byte:02}' for byte in bytes_result)                
+            spa_live = SpaLive.spa_live()
+            spa_live.ParseFromString(bytes_result)
+            
+            if debug==True:
+                print(f"--- FULL LIVE PACKET ---\n{spa_live}\n---------------------------------")
+                
+                print(f"Live Temperature: {spa_live.temperature_fahrenheit}°F")
+                print(f"Setpoint Temperature: {spa_live.temperature_setpoint_fahrenheit}°F")
+                print(f"Filter: {SpaLive.FILTER_STATUS.Name(spa_live.filter)}")
+                print(f"Onzen: {spa_live.onzen}")
+                print(f"Ozone: {SpaLive.OZONE_STATUS.Name(spa_live.ozone).lstrip('OZONE_')}")
+                print(f"Blower 1: {SpaLive.PUMP_STATUS.Name(spa_live.blower_1)}")
+                print(f"Blower 2: {SpaLive.PUMP_STATUS.Name(spa_live.blower_2)}")
+                print(f"Pump 1: { SpaLive.PUMP_STATUS.Name(spa_live.pump_1) }")
+                print(f"Pump 2: {SpaLive.PUMP_STATUS.Name(spa_live.pump_2)}")
+                print(f"Pump 3: {SpaLive.PUMP_STATUS.Name(spa_live.pump_3) }")
+                status_str = ', '.join(f"{name} = {value}" for value, name in SpaLive.HEATER_STATUS.items())
+                print(f"Heater Status Options: {status_str}")
+                print(f"Heater 1: {SpaLive.HEATER_STATUS.Name(spa_live.heater_1)}")
+                print(f"Heater 2: {SpaLive.HEATER_STATUS.Name(spa_live.heater_2)}")
+                print(f"Lights: {spa_live.lights}")
+                print(f"All On: {spa_live.all_on}")
+                print(f"Economy: {spa_live.economy}")
+                print(f"Exhaust Fan: {spa_live.exhaust_fan}")
+                print(f"Heater ADC: {spa_live.heater_adc}")
+                print(f"Current ADC: {spa_live.current_adc}")
+                print(f"pH Level: {global_ph_level}")
+                print(f"ORP Level: {global_orp_level} mV")
+            
+            live_json={
+                "SetPoint_F": spa_live.temperature_setpoint_fahrenheit,
+                "Temperature_F": spa_live.temperature_fahrenheit,
+                "Filter": SpaLive.FILTER_STATUS.Name(spa_live.filter),
+                "Onzen": spa_live.onzen, 
+                "Ozone": SpaLive.OZONE_STATUS.Name(spa_live.ozone).lstrip('OZONE_'),
+                "Blower 1": SpaLive.PUMP_STATUS.Name(spa_live.blower_1),
+                "Blower 2": SpaLive.PUMP_STATUS.Name(spa_live.blower_2),
+                "Pump 1": SpaLive.PUMP_STATUS.Name(spa_live.pump_1),
+                "Pump 2": SpaLive.PUMP_STATUS.Name(spa_live.pump_2),
+                "Pump 3": SpaLive.PUMP_STATUS.Name(spa_live.pump_3),
+                "Heater 1": SpaLive.HEATER_STATUS.Name(spa_live.heater_1),
+                "Heater 2": SpaLive.HEATER_STATUS.Name(spa_live.heater_2),
+                "Lights": spa_live.lights,
+                "All On": spa_live.all_on,
+                "Heater ADC": spa_live.heater_adc,
+                "Current ADC": spa_live.current_adc,
+                }
+            
+            status=producer.send_message(live_json, "SPABoii.Live")
+
+            # Update all sensors
+            for name, sensor in sensors:
+                if debug:
+                    print(f"HA Sensor Name: {name}")
+                
+                if name=="Temperature":
+                    temp=live_json.get("Temperature_F")
+                    if temp is not None:
+                        sensor.set_state(temp)
+                
+                if name=="SetPoint":
+                    temp=live_json.get("SetPoint_F")
+                    if temp is not None and temp > 30: # Check for F temp
+                        temp=round(temp,1) # 1 decimal
+                        sensor.set_value(temp)
+                
+                if name=="Heater1":
+                    heaterStatus = live_json.get("Heater 1")
+                    if heaterStatus == "HEATING" or heaterStatus == "WARMUP":
+                        sensor.on()
+                    else:
+                        sensor.off()
+                if name=="Pump1":
+                    sensor.mqtt_client.publish("hmd/select/SPABoii-Pump1/state", live_json.get("Pump 1"), False)
+        
+                if name=="Heater2":
+                    heaterStatus = live_json.get("Heater 2")
+                    if heaterStatus == "HEATING" or heaterStatus == "WARMUP":
+                        sensor.on()
+                    else:
+                        sensor.off()
+                
+                if name=="Lights":
+                    if live_json.get("Lights"):
+                        sensor.on()
+                    else:
+                        sensor.off()
+
+                if name=="Pump2":
+                    pump_status = live_json.get("Pump 2")
+                    if pump_status == "OFF":
+                        sensor.off()
+                    else:
+                        sensor.on() # Treat LOW or HIGH as ON
+
+                if name=="Pump3":
+                    pump_status = live_json.get("Pump 3")
+                    if pump_status == "OFF":
+                        sensor.off()
+                    else:
+                        sensor.on() # Treat LOW or HIGH as ON
+
+                if name=="Blower1":
+                    pump_status = live_json.get("Blower 1")
+                    if pump_status == "OFF":
+                        sensor.off()
+                    else:
+                        sensor.on() # Treat LOW or HIGH as ON
+
+                if name=="Blower2":
+                    pump_status = live_json.get("Blower 2")
+                    if pump_status == "OFF":
+                        sensor.off()
+                    else:
+                        sensor.on() # Treat LOW or HIGH as ON
+                
+                if name == "FilterStatus":
+                    sensor.set_state(live_json.get("Filter"))
+                
+                if name == "OzoneStatus":
+                    sensor.set_state(live_json.get("Ozone"))
+                
+                if name == "HeaterADC":
+                    sensor.set_state(live_json.get("Heater ADC"))
+
+                if name == "CurrentADC":
+                    sensor.set_state(live_json.get("Current ADC"))
+
+                if name == "Heater1Status":
+                    sensor.set_state(live_json.get("Heater 1"))
+                
+                if name == "Heater2Status":
+                    sensor.set_state(live_json.get("Heater 2"))
+
+                # PH/ORP are not updated here, only in the INFO block
+            return
+            
+
+# --- MODIFIED: This function now calls process_packet ---
+def receive(packet):
+    """Handle the received packet."""
+    process_packet(packet)
+
+
+# --- MODIFIED: Function signature updated ---
+def send_packet_with_debug(spaIP, sensors, connection_sensor):
     global debug
     # Create a TCP client socket
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -266,51 +547,124 @@ def send_packet_with_debug(spaIP,sensors):
     # Connect to the server at IP 192.168.68.106 on port 65534
     client.connect((spaIP, 65534))
   
+    # --- ADDED: Set connection sensor to ON ---
+    if connection_sensor:
+        connection_sensor.on()
 
-    
     i=0
     #get start time of loop
     start_time = time.time()
     while True:
 
-        #handle commands
-
+        # --- MODIFIED COMMAND HANDLING ---
+        spacmd = SpaCommand.spa_command() # Create a new command message
+        cmd_sent = False # Flag to track if we need to send a packet
+        
         try:
-            cmd=producer.cmd_queue.get(timeout=1)
+            # Check queue for a command
+            cmd=producer.cmd_queue.get(timeout=2)
         except queue.Empty:
             cmd=None
+        
         if cmd!=None:
             action=cmd["CMD"]
             closeservice=action.get("CloseService")
             newSetpointF=action.get("SetPoint")
+            
+            # --- Check for all new switch/select commands ---
+            pump1_cmd = action.get("pump1")
+            pump2_cmd = action.get("pump2")
+            pump3_cmd = action.get("pump3")
+            lights_cmd = action.get("lights")
+            blower1_cmd = action.get("blower1")
+            blower2_cmd = action.get("blower2")
+            boost_cmd = action.get("boost")
+            cl_range_cmd = action.get("cl_range") # <-- ADDED Cl Range
+
             if closeservice != None:
                 #exit SPABoii
                 break
+            
             if newSetpointF!=None:
                 #set new setpoint
                 print(f"Setpoint: {newSetpointF}°F")
-                spacmd=SpaCommand.spa_command()
-                #convert newSetpointF to fahrenheit int 
                 
-                newSetpointC=(newSetpointF*9/5)+32
-                #convert to int
-                newSetpointC=int(newSetpointC)
+                # HA is now sending F, so we can use it directly
+                newSetpointF_int=int(newSetpointF)
                 
+                spacmd.set_temperature_setpoint_fahrenheit=newSetpointF_int
+                cmd_sent = True
+            
+            if pump1_cmd != None:
+                print(f"Pump 1 Command: {pump1_cmd}")
+                if pump1_cmd == "OFF":
+                    spacmd.set_pump_1 = 0
+                elif pump1_cmd == "LOW":
+                    spacmd.set_pump_1 = 1
+                elif pump1_cmd == "HIGH":
+                    spacmd.set_pump_1 = 2
+                cmd_sent = True
 
+            if pump2_cmd != None:
+                print(f"Pump 2 Command: {pump2_cmd}")
+                spacmd.set_pump_2 = 2 if pump2_cmd == "ON" else 0 # Map ON to HIGH (2), OFF to 0
+                cmd_sent = True
 
-                
-                spacmd.set_temperature_setpoint_fahrenheit=newSetpointC
-                #convert spacmd proto to bytes
+            if pump3_cmd != None:
+                print(f"Pump 3 Command: {pump3_cmd}")
+                spacmd.set_pump_3 = 2 if pump3_cmd == "ON" else 0 # Map ON to HIGH (2), OFF to 0
+                cmd_sent = True
+
+            if lights_cmd != None:
+                print(f"Lights Command: {lights_cmd}")
+                spacmd.set_lights = 1 if lights_cmd == "ON" else 0 # Map ON to 1, OFF to 0
+                cmd_sent = True
+
+            if blower1_cmd != None:
+                print(f"Blower 1 Command: {blower1_cmd}")
+                spacmd.set_blower_1 = 2 if blower1_cmd == "ON" else 0 # Map ON to HIGH (2), OFF to 0
+                cmd_sent = True
+
+            if blower2_cmd != None:
+                print(f"Blower 2 Command: {blower2_cmd}")
+                spacmd.set_blower_2 = 2 if blower2_cmd == "ON" else 0 # Map ON to HIGH (2), OFF to 0
+                cmd_sent = True
+            
+            if boost_cmd != None:
+                print(f"Boost Command: {boost_cmd}")
+                # Set Onzen (SpaBoy) to ON (1) to start boost cycle
+                spacmd.set_onzen = 1 
+                cmd_sent = True
+
+            # --- ADDED Cl Range LOGIC (WITH CORRECT FIELD NAMES) ---
+            if cl_range_cmd != None:
+                print(f"Cl Range Command: {cl_range_cmd}")
+                if cl_range_cmd == "Low":
+                    spacmd.set_orp_level_low = 1195 # This is ID 0x30 (User's ORP Max)
+                    spacmd.set_orp_level_high = 1185 # This is ID 0x38 (User's ORP Min)
+                elif cl_range_cmd == "Mid":
+                    spacmd.set_orp_level_low = 1423
+                    spacmd.set_orp_level_high = 1413
+                elif cl_range_cmd == "High":
+                    spacmd.set_orp_level_low = 1523
+                    spacmd.set_orp_level_high = 1513
+                cmd_sent = True
+            # --- END Cl Range LOGIC ---
+
+            # If any command was added, serialize and send the packet
+            if cmd_sent:
                 buffer=spacmd.SerializeToString()
-                pckt = LevvenPacket(MessageType.COMMAND.value, buffer)  # Initialize with type 1 (Command) and an empty payload
+                pckt = LevvenPacket(MessageType.COMMAND.value, buffer)
                 if debug:
-                    print(f"Sending new Setpoint Packet Type: {pckt.type}/0x{pckt.type:02X}")
+                    print(f"Sending Command Packet Type: {pckt.type}/0x{pckt.type:02X}")
                 pack = LevvenToBytes(pckt)
-
                 # Send the serialized packet over the TCP connection
                 client.sendall(pack)
-                
-                #break
+                # Adding a small delay after sending a command can be helpful
+                time.sleep(0.5)
+
+        # --- END OF MODIFIED COMMAND HANDLING ---
+
 
         # Request the configuration on start
         if i  == 0:
@@ -318,12 +672,16 @@ def send_packet_with_debug(spaIP,sensors):
         # Request the spa information on start after short delay
         elif i  == 4:
             PingSpa(client, MessageType.INFORMATION.value)
-        #if i  == 8:
-        #    PingSpa(client, MessageType.PING.value)
         i += 1
-        # Ping the spa every 4th iteration for keep alive
+        
+        # --- MODIFIED PING LOGIC ---
         if i % 4 == 0:
+            # Every 4th loop, ping for INFO (which has pH/ORP)
+            PingSpa(client, MessageType.INFORMATION.value)
+        else:
+            # On all other loops, ping for LIVE (which has pumps/temp)
             PingSpa(client, MessageType.LIVE.value)
+        # --- END MODIFIED PING LOGIC ---
 
 
         temp = bytearray(2048)  # Declare the variable temp
@@ -334,6 +692,11 @@ def send_packet_with_debug(spaIP,sensors):
             #calculate time in minutes since start
             elapsed_minutes = (time.time() - start_time) / 60 /60
             print(f"Connection lost after {elapsed_minutes:.2f} hours")
+            
+            # --- ADDED: Set connection sensor to OFF ---
+            if connection_sensor:
+                connection_sensor.off()
+            
             client.close()
             
             print("Restarting")
@@ -341,167 +704,17 @@ def send_packet_with_debug(spaIP,sensors):
             
             #print(f"Error: {e}")
             break
+
         #print recieved data as hex
         hex_representation = ' '.join(f'{byte:02X}' for byte in temp)
 
-        # Process the received data
+        # Process the received data (which calls receive -> process_packet)
         with io.BytesIO(temp) as net_stream:
             read_and_process_packets(net_stream)
             
-        try:
-            if debug:
-                print(f"Packet Type: {packet.type}/0x{packet.type:02X} - {get_message_title(packet.type)}")
-
-            if packet.type == MessageType.PING.value:
-                # Nothing to see here, don't decode or debug print the packet
-                continue
-            pack=LevvenToBytes(packet)
-        except Exception as e:
-            pack=None
-            continue
-
-        if pack!=None:
-            if packet.type == MessageType.INFORMATION.value:
-                if debug:
-                    print(f"\n{get_message_title(packet.type)}:\n")
-                    bytes_result = bytes(packet.payload)
-                    spa_information = SpaInformation.spa_information()
-                    spa_information.ParseFromString(bytes_result)
-
-                    print(f"Pack Serial Number: {spa_information.pack_serial_number}")
-                    print(f"Pack Firmware Version: {spa_information.pack_firmware_version}")
-                    print(f"Pack Hardware Version: {spa_information.pack_hardware_version}")
-                    print(f"Pack Product ID: {spa_information.pack_product_id}")
-                    print(f"Pack Board ID: {spa_information.pack_board_id}")
-                    print(f"Topside Product ID: {spa_information.topside_product_id}")
-                    print(f"Topside Software Version: {spa_information.topside_software_version}")
-                    print(f"GUID: {spa_information.guid}")
-                    print(f"Website Registration: {spa_information.website_registration}")
-                    print(f"Website Registration Confirm: {spa_information.website_registration_confirm}")
-
-                    mac_hex = ' '.join(f'{byte:02X}' for byte in spa_information.mac_address)
-                    print(f"MAC Address: {mac_hex}")
-                    print(f"Firmware Version: {spa_information.firmware_version}")
-                    print(f"Product Code: {SpaInformation.PRODUCT_CODE.Name(spa_information.product_code)}")
-                    print(f"Spa Type: {SpaInformation.SPA_TYPE.Name(spa_information.spa_type)}")
-                continue
-            elif packet.type == MessageType.CONFIGURATION.value:
-                if debug:
-                    print(f"\n{get_message_title(packet.type)}:\n")
-                    bytes_result = bytes(packet.payload)
-                    spa_configuration = SpaConfiguration.spa_configuration()
-                    spa_configuration.ParseFromString(bytes_result)
-
-                    print(f"Pump 1: {spa_configuration.pump_1}")
-                    print(f"Pump 2: {spa_configuration.pump_2}")
-                    print(f"Pump 3: {spa_configuration.pump_3}")
-                    print(f"Pump 4: {spa_configuration.pump_4}")
-                    print(f"Pump 5: {spa_configuration.pump_5}")
-                    print(f"Lights: {spa_configuration.lights}")
-                    print(f"Stereo: {spa_configuration.stereo}")
-                    print(f"Heater 1: {spa_configuration.heater_1}")
-                    print(f"Heater 2: {spa_configuration.heater_2}")
-                    print(f"Filter: {spa_configuration.filter}")
-                    print(f"Onzen: {spa_configuration.onzen}")
-                    print(f"Smart Onzen: {spa_configuration.smart_onzen}")
-                    print(f"Ozone Peak 1: {spa_configuration.ozone_peak_1}")
-                    print(f"Ozone Peak 2: {spa_configuration.ozone_peak_2}")
-                    print(f"Blower 1: {spa_configuration.blower_1}")
-                    print(f"Blower 2: {spa_configuration.blower_2}")
-                    print(f"Power: {SpaConfiguration.PHASE.Name(spa_configuration.powerlines)}")
-                    print(f"Exhaust Fan: {spa_configuration.exhaust_fan}")
-                    print(f"Breaker Size: {spa_configuration.breaker_size}")
-                    print(f"Fogger: {spa_configuration.fogger}")
-                continue
-            elif packet.type == MessageType.LIVE.value:
-                if debug:
-                    print(f"\n{get_message_title(packet.type)}:\n")
-                bytes_result = bytes(packet.payload)
-                #print the bytes
-                hex_representation = ' '.join(f'{byte:02}' for byte in bytes_result)                
-                spa_live = SpaLive.spa_live()
-                spa_live.ParseFromString(bytes_result)
+        # --- ENTIRE LOGIC BLOCK REMOVED FROM HERE ---
+        # All processing is now handled in receive() -> process_packet()
                 
-                if debug==True:
-                    print(f"Live Temperature: {temperature_F_to_C(spa_live.temperature_fahrenheit):.1f}°C {spa_live.temperature_fahrenheit}°F")
-                    print(f"Setpoint Temperature: {temperature_F_to_C(spa_live.temperature_setpoint_fahrenheit):.1f}°C {spa_live.temperature_setpoint_fahrenheit}°F")
-                    print(f"Filter: {SpaLive.FILTER_STATUS.Name(spa_live.filter)}")
-                    print(f"Onzen: {spa_live.onzen}")
-                    print(f"Ozone: {SpaLive.OZONE_STATUS.Name(spa_live.ozone).lstrip('OZONE_')}")
-                    print(f"Blower 1: {SpaLive.PUMP_STATUS.Name(spa_live.blower_1)}")
-                    print(f"Blower 2: {SpaLive.PUMP_STATUS.Name(spa_live.blower_2)}")
-                    print(f"Pump 1: { SpaLive.PUMP_STATUS.Name(spa_live.pump_1) }")
-                    print(f"Pump 2: {SpaLive.PUMP_STATUS.Name(spa_live.pump_2)}")
-                    print(f"Pump 3: {SpaLive.PUMP_STATUS.Name(spa_live.pump_3) }")
-                    status_str = ', '.join(f"{name} = {value}" for value, name in SpaLive.HEATER_STATUS.items())
-                    print(f"Heater Status Options: {status_str}")
-                    print(f"Heater 1: {SpaLive.HEATER_STATUS.Name(spa_live.heater_1)}")
-                    print(f"Heater 2: {SpaLive.HEATER_STATUS.Name(spa_live.heater_2)}")
-                    print(f"Lights: {spa_live.lights}")
-                    print(f"All On: {spa_live.all_on}")
-                    print(f"Economy: {spa_live.economy}")
-                    print(f"Exhaust Fan: {spa_live.exhaust_fan}")
-
-                    print(f"Heater ADC: {spa_live.heater_adc}")
-                    print(f"Current ADC: {spa_live.current_adc}")
-                
-                live_json={
-                    "SetPoint": temperature_F_to_C(spa_live.temperature_setpoint_fahrenheit),
-                    "SetPoint_F": spa_live.temperature_setpoint_fahrenheit,
-                    "Temperature": temperature_F_to_C(spa_live.temperature_fahrenheit),
-                    "Temperature_F": spa_live.temperature_fahrenheit,
-                    "Filter": SpaLive.FILTER_STATUS.Name(spa_live.filter),
-                    "Onzen": SpaLive.OZONE_STATUS.Name(spa_live.onzen).lstrip("OZONE_"),
-                    "Blower 1": SpaLive.PUMP_STATUS.Name(spa_live.blower_1),
-                    "Blower 2": SpaLive.PUMP_STATUS.Name(spa_live.blower_2),
-                    "Pump 1": SpaLive.PUMP_STATUS.Name(spa_live.pump_1),
-                    "Pump 2": SpaLive.PUMP_STATUS.Name(spa_live.pump_2),
-                    "Pump 3": SpaLive.PUMP_STATUS.Name(spa_live.pump_3),
-                    "Heater 1": SpaLive.HEATER_STATUS.Name(spa_live.heater_1),
-                    "Heater 2": SpaLive.HEATER_STATUS.Name(spa_live.heater_2),
-                    "Light": spa_live.lights,
-                    "All On": spa_live.all_on,
-                    "Current ADC": spa_live.current_adc
-                    }
-                
-                status=producer.send_message(live_json, "SPABoii.Live")
-                #print(status)
-
-                #get value by name Temperature from list
-                for name, sensor in sensors:
-                    if debug:
-                        print(f"HA Sensor Name: {name}")#, Value: {sensor}")
-                    if name=="Temperature":
-                        temp=live_json.get("Temperature")
-                        sensor.set_state(temp)
-                    if name=="SetPoint":
-                        temp=live_json.get("SetPoint")
-                        #round to 2 decimals
-                        temp=round(temp,2)
-                        if temp>9:
-                            sensor.set_value(temp)
-                    if name=="Heater1":
-                        heaterStatus = SpaLive.HEATER_STATUS.Name(spa_live.heater_1)
-
-                        if heaterStatus == "HEATING" or heaterStatus == "WARMUP":
-                            sensor.on()
-                        else:
-                            sensor.off()
-                    if name=="Pump1":
-                        if debug:
-                            print(f"Publishing Pump1 state");
-                        sensor.mqtt_client.publish("hmd/select/SPABoii-Pump1/state", SpaLive.PUMP_STATUS.Name(spa_live.pump_1), False)
-            
-
-                
-                
-                
-
-                
-                
-                
-
-    
     client.close()
 
 
@@ -510,18 +723,34 @@ def send_packet_with_debug(spaIP,sensors):
 
 
 
+# --- MODIFIED: Main loop ---
 while True:
+    # --- ADDED: Find connection sensor ---
+    connection_sensor = find_sensor_by_name(sensors, "ConnectionStatus")
+    
+    # --- ADDED: Check for spa_ip ---
+    if not spa_ip:
+        print("Error: spa_ip not found in settings.yaml. Exiting.")
+        if connection_sensor:
+            connection_sensor.off()
+        break
+        
     try:
-        spaIP="192.168.68.106" #get_spa()
-        print (f"Spa IP: {spaIP}")
-        send_packet_with_debug(spaIP,sensors=sensors)
-        time.sleep(5)
+        # --- MODIFIED: Use configured spa_ip ---
+        print (f"Spa IP: {spa_ip}")
+        # --- MODIFIED: Pass sensor to function ---
+        send_packet_with_debug(spa_ip, sensors, connection_sensor)
+        # time.sleep(5) # This sleep is problematic, loop will run on connection drop
     except KeyboardInterrupt:
         print("\nCtrl-C detected. Exiting gracefully...")
+        # --- ADDED: Set connection sensor to OFF ---
+        if connection_sensor:
+            connection_sensor.off()
         break  # Exit the loop gracefully
     except Exception as e:
+        print(f"An error occurred: {e}. Restarting...")
+        # --- ADDED: Set connection sensor to OFF ---
+        if connection_sensor:
+            connection_sensor.off()
+        time.sleep(5) # Prevent rapid-fire restarts on a fatal error
         continue
-
-
-
-
