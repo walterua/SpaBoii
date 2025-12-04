@@ -1,0 +1,40 @@
+syntax = "proto2";
+
+package com.levven.protobuf.coldfire;
+
+message spa_information {
+    optional string pack_serial_number = 1;
+    optional string pack_firmware_version = 2;
+    optional string pack_hardware_version = 3;
+    optional string pack_product_id = 4;
+    optional string pack_board_id = 5;
+    optional string topside_product_id = 6;
+    optional string topside_software_version = 7;
+    optional string guid = 8;
+    optional SPA_TYPE spa_type = 9;
+    optional bool website_registration = 10;
+    optional bool website_registration_confirm = 11;
+    optional bytes mac_address = 12;
+    optional uint32 firmware_version = 13;
+    optional uint32 product_code = 14;
+}
+
+enum SPA_TYPE {
+    HOT_TUB = 0;
+    COLD_TUB = 1;
+    SAUNA = 2;
+}
+
+enum PRODUCT_CODE {
+    SPA_NA_COLDFIRE = 65536;
+    SPA_EURO_COLDFIRE = 65537;
+    SPA_NA_LPC = 65538;
+    SPA_EURO_LPC = 65539;
+    SAUNA_COLDFIRE = 131072;
+    SAUNA_LPC = 131073;
+    COLD_TUB_COLDFIRE = 196608;
+    COLD_TUB_LPC = 196609;
+    PERIPHERAL_WAU = 262144;
+    PERIPHERAL_ONZEN = 262145;
+    PERIPHERAL_TOP_SIDE_A10 = 262146;
+}

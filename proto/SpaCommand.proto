@@ -1,0 +1,41 @@
+syntax = "proto2";
+
+package spa;
+
+message spa_command {
+    optional int32 set_temperature_setpoint_fahrenheit = 1;
+    optional SET_PUMP_STATUS set_pump_1 = 2;
+    optional SET_PUMP_STATUS set_pump_2 = 3;
+    optional SET_PUMP_STATUS set_pump_3 = 4;
+    optional SET_PUMP_STATUS set_pump_4 = 5;
+    optional SET_PUMP_STATUS set_pump_5 = 6;
+    optional SET_PUMP_STATUS set_blower_1 = 7;
+    optional SET_PUMP_STATUS set_blower_2 = 8;
+    optional bool set_lights = 9;
+    optional bool set_stereo = 10;
+    optional bool set_filter = 11;
+    optional bool set_onzen = 12;
+    optional bool set_ozone = 13;
+    optional bool set_exhaust_fan = 14;
+    optional SET_SAUNA_STATE set_sauna_state = 15;
+    optional int32 set_sauna_time_left = 16;
+    optional bool all_on = 17;
+    optional bool set_fogger = 18;
+    optional bool spaboy_boost = 19;
+    optional int32 set_orp_level_low = 50;
+    optional int32 set_orp_level_high = 51;
+}
+
+enum SET_PUMP_STATUS {
+    OFF = 0;
+    LOW = 1;
+    HIGH = 2;
+}
+
+enum SET_SAUNA_STATE {
+    IDLE = 0;
+    TIMER = 1;
+    PRESET_A = 2;
+    PRESET_B = 3;
+    PRESET_C = 4;
+}

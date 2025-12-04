@@ -1,0 +1,32 @@
+syntax = "proto2";
+
+package com.levven.protobuf.coldfire;
+
+message spa_settings {
+    optional int32 max_filtration_frequency = 1;
+    optional int32 min_filtration_frequency = 2;
+    optional int32 filtration_frequency = 3;
+    optional int32 max_filtration_duration = 4;
+    optional int32 min_filtration_duration = 5;
+    optional int32 filtration_duration = 6;
+    optional int32 max_onzen_hours = 7;
+    optional int32 min_onzen_hours = 8;
+    optional int32 onzen_hours = 9;
+    optional int32 max_onzen_cycles = 10;
+    optional int32 min_onzen_cycles = 11;
+    optional int32 onzen_cycles = 12;
+    optional int32 max_ozone_hours = 13;
+    optional int32 min_ozone_hours = 14;
+    optional int32 ozone_hours = 15;
+    optional int32 max_ozone_cycles = 16;
+    optional int32 min_ozone_cycles = 17;
+    optional int32 ozone_cycles = 18;
+    optional bool filter_suspension = 19;
+    optional bool flash_lights_on_error = 20;
+    optional int32 temperature_offset = 21;
+    optional int32 sauna_duration = 22;
+    optional int32 min_temperature = 23;
+    optional int32 max_temperature = 24;
+    optional int32 filtration_offset = 25;
+    optional int32 spaboy_hours = 26;
+}

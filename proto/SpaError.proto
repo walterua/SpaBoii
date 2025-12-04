@@ -1,0 +1,16 @@
+syntax = "proto2";
+
+package com.levven.protobuf.coldfire;
+
+message spa_error {
+    optional bool no_flow = 1;
+    optional bool flow_switch = 2;
+    optional bool heater_over_temperature = 3;
+    optional bool spa_over_temperature = 4;
+    optional bool spa_temperature_probe = 5;
+    optional bool spa_high_limit = 6;
+    optional bool eeprom = 7;
+    optional bool freeze_protect = 8;
+    optional bool ph_high = 9;
+    optional bool heater_probe_disconnected = 10;
+}

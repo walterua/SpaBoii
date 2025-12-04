@@ -26,3 +26,6 @@ temp/
 # Ignore OS generated files
 .DS_Store
 Thumbs.db
+
+# Ignore private settings
+settings.yaml

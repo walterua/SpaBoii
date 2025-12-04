@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package spa;
+
+message spa_onzen_settings {
+    optional string pack_serial_number = 1;
+    optional int32 orp_low = 6;
+    optional int32 orp_high = 7;
+}

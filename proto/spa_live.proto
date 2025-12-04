@@ -1,0 +1,68 @@
+syntax = "proto2";
+
+package SpaServer.protobuf.ColdFire;
+
+message spa_live {
+    optional int32 temperature_fahrenheit = 1;
+    optional int32 temperature_setpoint_fahrenheit = 2;
+    optional PUMP_STATUS pump_1 = 3;
+    optional PUMP_STATUS pump_2 = 4;
+    optional PUMP_STATUS pump_3 = 5;
+    optional PUMP_STATUS pump_4 = 6;
+    optional PUMP_STATUS pump_5 = 7;
+    optional PUMP_STATUS blower_1 = 8;
+    optional PUMP_STATUS blower_2 = 9;
+    optional bool lights = 10;
+    optional bool stereo = 11;
+    optional HEATER_STATUS heater_1 = 12;
+    optional HEATER_STATUS heater_2 = 13;
+    optional FILTER_STATUS filter = 14;
+    optional bool onzen = 15;
+    optional OZONE_STATUS ozone = 16;
+    optional bool exhaust_fan = 17;
+    optional SAUNA_STATUS sauna = 18;
+    optional int32 heater_adc = 20;
+    optional int32 sauna_time_remaining = 21;
+    optional bool economy = 22;
+    optional int32 current_adc = 23;
+    optional bool all_on = 24;
+    optional bool fogger = 25;
+}
+
+enum PUMP_STATUS {
+    OFF = 0;
+    LOW = 1;
+    HIGH = 2;
+}
+
+enum HEATER_STATUS {
+    IDLE = 0;
+    WARMUP = 1;
+    HEATING = 2;
+    COOLDOWN = 3;
+}
+
+enum FILTER_STATUS {
+    FILTER_IDLE = 0;
+    FILTER_PURGE = 1;
+    FILTER_FILTERING = 2;
+    FILTER_SUSPENDED = 3;
+    FILTER_OVERTEMPERATURE = 4;
+    FILTER_RESUMING = 5;
+    FILTER_BOOST = 6;
+    FILTER_SANITIZE = 7;
+}
+
+enum OZONE_STATUS {
+    OZONE_IDLE = 0;
+    OZONE_ACTIVE = 1;
+    OZONE_SUSPENDED = 2;
+}
+
+enum SAUNA_STATUS {
+    SAUNA_STATUS_IDLE = 0;
+    SAUNA_STATUS_NORMAL = 1;
+    SAUNA_STATUS_PRESET_A = 2;
+    SAUNA_STATUS_PRESET_B = 3;
+    SAUNA_STATUS_PRESET_C = 4;
+}

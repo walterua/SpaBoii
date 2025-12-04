@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package com.levven.protobuf.coldfire;
+
+message spa_router {
+    optional string ssid = 1;
+    optional string password = 2;
+    optional ENCRYPTION encryption = 3;
+    optional PROTOCOL protocol = 4;
+}
+
+enum ENCRYPTION {
+    ENCRYPTION_NONE = 0;
+    ENCRYPTION_WEP = 1;
+    ENCRYPTION_WPA = 2;
+    ENCRYPTION_WPA2 = 3;
+}
+
+enum PROTOCOL {
+    PROTOCOL_NONE = 0;
+    PROTOCOL_AES = 1;
+    PROTOCOL_TKIP = 2;
+}

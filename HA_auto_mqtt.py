@@ -96,16 +96,15 @@ def switch_callback(client: Client, user_data, message: MQTTMessage):
     producer.cmd_queue.put(msg)
 
 # --- NEW CALLBACK FOR Cl Range ---
-# To receive Cl Range select commands from HA, define a callback function:
+# --- UPDATED CALLBACK WITH DEBUGGING ---
 def cl_range_callback(client: Client, user_data, message: MQTTMessage):
+    # Print EVERYTHING received to debug the trigger
+    payload = message.payload.decode('utf-8')
+    print(f"DEBUG: MQTT Callback Triggered! Data: {user_data}, Payload: {payload}")
+
     if user_data == "cl_range":
-        command_state = message.payload.decode('utf-8') # "Low", "Mid", "High"
-        print(f"Cl Range select message: {command_state}")
-        
-        # Create the command message
-        msg = {"CMD": { "cl_range": command_state }}
-        
-        # Use producer.cmd_queue directly
+        print(f"Cl Range select message: {payload}")
+        msg = {"CMD": { "cl_range": payload }}
         producer.cmd_queue.put(msg)
 # --- END NEW CALLBACK ---
 
@@ -322,6 +321,9 @@ def init(SPAproducer):
         unique_id="spa_cl_range_select",
         options=["Low", "Mid", "High"],
         icon="mdi:creation",
+        # FORCE the topics so there is no ambiguity about case sensitivity
+        command_topic="hmd/select/SPABoii-ClRange/command",
+        state_topic="hmd/select/SPABoii-ClRange/state"
     )
     clRangeSettings = Settings(mqtt=mqtt_settings, entity=cl_range_info)
     cl_range_select = Select(clRangeSettings, cl_range_callback, "cl_range")

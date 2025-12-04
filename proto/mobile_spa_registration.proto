@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package com.levven.protobuf;
+
+message mobile_spa_registration {
+    optional string registration_code = 1;
+    optional string serial_number = 2;
+    optional string spa_nickname = 3;
+    optional REGISTRATION_STATUS reg_status = 4;
+}
+
+enum REGISTRATION_STATUS {
+    REGISTRATION_SUCCESS = 0;
+    REGISTRATION_FAILURE = 1;
+}

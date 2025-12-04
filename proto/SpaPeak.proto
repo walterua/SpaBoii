@@ -1,0 +1,32 @@
+syntax = "proto2";
+
+package com.levven.protobuf.coldfire;
+
+message spa_peak {
+    optional int32 PeakNum = 1;
+    optional int32 PeakStart1 = 2;
+    optional int32 PeakEnd1 = 3;
+    optional int32 PeakStart2 = 4;
+    optional int32 PeakEnd2 = 5;
+    optional int32 MidPeakNum = 6;
+    optional int32 MidPeakStart1 = 7;
+    optional int32 MidPeakEnd1 = 8;
+    optional int32 MidPeakStart2 = 9;
+    optional int32 MidPeakEnd2 = 10;
+    optional int32 OffPeakStart = 11;
+    optional int32 OffPeakEnd = 12;
+    optional int32 Offset = 13;
+    optional bool PeakHeater = 14;
+    optional bool PeakFilter = 15;
+    optional bool PeakOzone = 16;
+    optional bool MidPeakHeater = 17;
+    optional bool MidPeakFilter = 18;
+    optional bool MidPeakOzone = 19;
+    optional bool Sat = 20;
+    optional bool Sun = 21;
+    optional bool Mon = 22;
+    optional bool Tue = 23;
+    optional bool Wed = 24;
+    optional bool Thu = 25;
+    optional bool Fri = 26;
+}

@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package com.levven.protobuf;
+
+message mobile_authenticate {
+    optional string username = 1;
+    optional string salt = 2;
+    optional string hash = 3;
+    optional AUTHENTICATE_STATUS auth_status = 4;
+}
+
+enum AUTHENTICATE_STATUS {
+    AUTHENTICATE_SUCCESS = 0;
+    AUTHENTICATE_FAILURE = 1;
+}

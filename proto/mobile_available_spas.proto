@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package com.levven.protobuf;
+
+message mobile_available_spas {
+    repeated mobile_spa mobileSpa = 1;
+    message mobile_spa {
+        optional string guid = 1;
+        optional string packProductId = 2;
+        optional int32 productCode = 3;
+        optional string nickName = 4;
+        optional bool connected = 5;
+        optional string serverId = 6;
+    }
+}

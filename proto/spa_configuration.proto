@@ -1,0 +1,33 @@
+syntax = "proto2";
+
+package SpaServer.protobuf.ColdFire;
+
+message spa_configuration {
+    optional bool pump_1 = 1;
+    optional bool pump_2 = 2;
+    optional bool pump_3 = 3;
+    optional bool pump_4 = 4;
+    optional bool pump_5 = 5;
+    optional bool blower_1 = 6;
+    optional bool blower_2 = 7;
+    optional bool lights = 8;
+    optional bool stereo = 9;
+    optional bool heater_1 = 10;
+    optional bool heater_2 = 11;
+    optional bool filter = 12;
+    optional bool onzen = 13;
+    optional bool ozone_peak_1 = 14;
+    optional bool ozone_peak_2 = 15;
+    optional bool exhaust_fan = 16;
+    optional PHASE powerlines = 17;
+    optional int32 breaker_size = 18;
+    optional int32 smart_onzen = 19;
+    optional bool fogger = 20;
+}
+
+enum PHASE {
+    TRUE_THREE = 0;
+    SINGLE = 1;
+    TWO = 2;
+    THREE = 3;
+}
